@@ -30,7 +30,8 @@ SSE_HEADERS = {
 
 IMAGE_HOSTS = (
     'hdslb.com', 'bilibili.com', 'ytimg.com', 'ggpht.com', 'douyinpic.com', 'douyin.com',
-    'ixigua.com', 'kuaishou.com', 'weibo.com', 'zhimg.com', 'iqiyi.com', 'qq.com', 'youku.com',
+    'ixigua.com', 'kuaishou.com', 'weibo.com', 'zhimg.com', 'iqiyi.com', 'iqiyipic.com',
+    'qq.com', 'youku.com',
     'tiktokcdn.com', 'twimg.com', 'pinimg.com', 'sinaimg.cn', 'bcebos.com', 'byteimg.com',
     'acfun.cn', 'xiaohongshu.com', 'xhscdn.com', 'snssdk.com', 'amemv.com', 'vimeo.com',
     'dailymotion.com', 'nicovideo.jp', 'sohu.com', 'mgtv.com', 'hitv.com', 'le.com', 'pptv.com',
@@ -212,17 +213,29 @@ async def ollama_models():
     return await ai.list_models()
 
 
+def image_referer(host: str) -> str:
+    """部分图床会校验 Referer，按域名给对应的来源页。"""
+    if host.endswith(('iqiyipic.com', 'iqiyi.com')):
+        return 'https://www.iqiyi.com/'
+    if host.endswith(('hitv.com', 'mgtv.com')):
+        return 'https://www.mgtv.com/'
+    if host.endswith(('hdslb.com', 'bilibili.com')):
+        return 'https://www.bilibili.com/'
+    return ''
+
+
 @app.get('/api/image')
 async def image_proxy(url: str):
     host = urllib.parse.urlparse(url).hostname or ''
     if not any(host.endswith(h) or host == h for h in IMAGE_HOSTS):
         raise HTTPException(403, '不在允许的图片域名内')
+    headers = {'User-Agent': engine._UA}
+    referer = image_referer(host)
+    if referer:
+        headers['Referer'] = referer
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            resp = await client.get(url, headers={
-                'User-Agent': engine._UA,
-                'Referer': 'https://www.bilibili.com/',
-            })
+            resp = await client.get(url, headers=headers)
             resp.raise_for_status()
         return Response(content=resp.content, media_type=resp.headers.get('content-type', 'image/jpeg'),
                         headers={'Cache-Control': 'public, max-age=86400'})

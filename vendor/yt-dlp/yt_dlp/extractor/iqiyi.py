@@ -1,5 +1,6 @@
 import hashlib
 import itertools
+import json
 import re
 import time
 import urllib.parse
@@ -23,6 +24,7 @@ from ..utils import (
     remove_start,
     str_or_none,
     traverse_obj,
+    url_or_none,
     urljoin,
 )
 
@@ -101,6 +103,18 @@ class IqiyiIE(InfoExtractor):
         '18': 7,    # 1080p
     }
 
+    # tmts 接口只给 vd 编码，不给分辨率；补一份映射，供下载器按清晰度分档
+    _FORMAT_HEIGHTS = {
+        '96': 240,
+        '1': 360,
+        '2': 480,
+        '21': 504,
+        '4': 720,
+        '17': 720,
+        '5': 1080,
+        '18': 1080,
+    }
+
     def get_raw_data(self, tvid, video_id):
         tm = int(time.time() * 1000)
 
@@ -118,6 +132,36 @@ class IqiyiIE(InfoExtractor):
             f'http://cache.m.iqiyi.com/jp/tmts/{tvid}/{video_id}/',
             video_id, transform_source=lambda s: remove_start(s, 'var tvInfoJs='),
             query=params, headers=self.geo_verification_headers())
+
+    def _extract_mobile_video_info(self, url):
+        # 新版网页端播放页已改为纯前端渲染，HTML 中不再有 tvid/vid；
+        # 移动端页面仍由服务端注入 window.__INITIAL_STATE__，可从其中取回。
+        mobile_url = re.sub(r'://(?:www\.)?iqiyi\.com', '://m.iqiyi.com', url, count=1)
+        webpage = self._download_webpage(
+            mobile_url, 'temp_id', note='Downloading mobile video page',
+            headers={'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
+                                   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 '
+                                   'Mobile/15E148 Safari/604.1'})
+        state = {}
+        marker = 'window.__INITIAL_STATE__='
+        start = webpage.find(marker)
+        if start != -1:
+            try:
+                state, _ = json.JSONDecoder().raw_decode(webpage[start + len(marker):])
+            except ValueError:
+                self.report_warning('Unable to parse mobile video page')
+        video_info = traverse_obj(state, ('play', 'videoInfo', {dict})) or {}
+        album_info = traverse_obj(state, ('play', 'albumInfo', {dict})) or {}
+        thumbnail = video_info.get('imageUrl') or album_info.get('imageUrl')
+        if isinstance(thumbnail, str) and thumbnail.startswith('//'):
+            thumbnail = f'https:{thumbnail}'
+        return {
+            'tvid': str_or_none(video_info.get('tvid')),
+            'vid': str_or_none(video_info.get('vid')),
+            'title': video_info.get('videoName'),
+            'duration': int_or_none(video_info.get('duration')),
+            'thumbnail': url_or_none(thumbnail),
+        }
 
     def _extract_playlist(self, webpage):
         PAGE_SIZE = 50
@@ -161,13 +205,18 @@ class IqiyiIE(InfoExtractor):
         # as a single video first
         tvid = self._search_regex(
             r'data-(?:player|shareplattrigger)-tvid\s*=\s*[\'"](\d+)', webpage, 'tvid', default=None)
+        mobile_info = {}
+        video_id = None
         if tvid is None:
             playlist_result = self._extract_playlist(webpage)
             if playlist_result:
                 return playlist_result
-            raise ExtractorError('Can\'t find any video')
+            mobile_info = self._extract_mobile_video_info(url)
+            tvid, video_id = mobile_info.get('tvid'), mobile_info.get('vid')
+            if not tvid or not video_id:
+                raise ExtractorError('Can\'t find any video')
 
-        video_id = self._search_regex(
+        video_id = video_id or self._search_regex(
             r'data-(?:player|shareplattrigger)-videoid\s*=\s*[\'"]([a-f\d]+)', webpage, 'video_id')
 
         formats = []
@@ -185,12 +234,20 @@ class IqiyiIE(InfoExtractor):
                 if 'm3utx' not in stream:
                     continue
                 vd = str(stream['vd'])
+                resolution = parse_resolution(stream.get('screenSize'))
+                height = self._FORMAT_HEIGHTS.get(vd) or resolution.get('height')
                 formats.append({
                     'url': stream['m3utx'],
                     'format_id': vd,
                     'ext': 'mp4',
                     'quality': self._FORMATS_MAP.get(vd, -1),
                     'protocol': 'm3u8_native',
+                    'width': resolution.get('width'),
+                    'height': height,
+                    'format_note': f'{height}P' if height else None,
+                    # tmts 返回的是已混合音视频的 m3u8，标记编解码器便于按单文件下载
+                    'vcodec': 'hevc' if '265' in (stream.get('fileFormat') or '').upper() else 'avc1',
+                    'acodec': 'aac',
                 })
 
             if formats:
@@ -200,12 +257,17 @@ class IqiyiIE(InfoExtractor):
 
         title = (get_element_by_id('widget-videotitle', webpage)
                  or clean_html(get_element_by_attribute('class', 'mod-play-tit', webpage))
-                 or self._html_search_regex(r'<span[^>]+data-videochanged-title="word"[^>]*>([^<]+)</span>', webpage, 'title'))
+                 or self._html_search_regex(r'<span[^>]+data-videochanged-title="word"[^>]*>([^<]+)</span>', webpage, 'title', default=None)
+                 or mobile_info.get('title'))
 
         return {
             'id': video_id,
             'title': title,
             'formats': formats,
+            **traverse_obj(mobile_info, {
+                'duration': ('duration', {int_or_none}),
+                'thumbnail': ('thumbnail', {url_or_none}),
+            }),
         }
 
 
