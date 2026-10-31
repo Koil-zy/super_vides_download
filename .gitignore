@@ -1,0 +1,23 @@
+# 运行产物
+downloads/
+__pycache__/
+*.py[cod]
+*.log
+
+# 虚拟环境
+.venv/
+venv/
+
+# 编辑器 / 本地工具
+.vscode/
+.idea/
+.trae/
+.trae-html-share-packages/
+.screenshots/
+
+# vendor 里保留的 yt-dlp 上游 git 元数据（仅本地备份，不入库）
+vendor/yt-dlp/.git-upstream/
+
+# 本地配置与密钥
+.env
+.env.*
