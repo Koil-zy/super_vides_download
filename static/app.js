@@ -9,6 +9,16 @@
     jobsRaw: '',
     page: 0,
     summarizing: false,
+    user: null,
+    premium: false,
+    subscription: null,
+    plan: null,
+    providers: null,
+    mockPay: false,
+    authMode: 'login',
+    pendingDownload: null,
+    payOrder: null,
+    payTimer: 0,
   };
 
   const PAGE_SIZE = 12;
@@ -41,11 +51,25 @@
     const resp = await fetch(path, options);
     if (!resp.ok) {
       let detail = `请求失败（${resp.status}）`;
+      let code = '';
+      let payload = null;
       try {
         const data = await resp.json();
-        if (data && data.detail) detail = data.detail;
+        if (data) {
+          payload = data;
+          if (typeof data.detail === 'string') {
+            detail = data.detail;
+          } else if (data.detail && typeof data.detail === 'object') {
+            detail = data.detail.message || detail;
+            code = data.detail.code || '';
+          }
+        }
       } catch (_) { /* ignore */ }
-      throw new Error(detail);
+      const err = new Error(detail);
+      err.status = resp.status;
+      err.code = code;
+      err.payload = payload;
+      throw err;
     }
     return resp.json();
   }
@@ -55,6 +79,231 @@
     if (cls) node.className = cls;
     if (text !== undefined) node.textContent = text;
     return node;
+  }
+
+  /* ------------------------------------------------------------ 弹窗 */
+  function showModal(id) {
+    const modal = $(id);
+    if (modal) modal.hidden = false;
+  }
+
+  function closeModal(id) {
+    const modal = $(id);
+    if (!modal) return;
+    modal.hidden = true;
+    if (id === 'payModal') stopPoll();
+  }
+
+  /* ------------------------------------------------------------ 账号状态 */
+  async function loadMe() {
+    try {
+      applyMe(await api('/api/auth/me'));
+    } catch (_) { /* ignore */ }
+  }
+
+  function applyMe(data) {
+    state.user = (data && data.user) || null;
+    state.premium = !!(data && data.premium);
+    state.subscription = (data && data.subscription) || null;
+    if (data && data.plan) state.plan = data.plan;
+    if (data && data.providers) state.providers = data.providers;
+    if (data && typeof data.mock_pay === 'boolean') state.mockPay = data.mock_pay;
+    renderUser();
+    if (state.meta) renderFormats(state.meta.formats || []);
+  }
+
+  function renderUser() {
+    const loginBtn = $('loginBtn');
+    const info = $('userInfo');
+    if (!state.user) {
+      loginBtn.hidden = false;
+      info.hidden = true;
+      return;
+    }
+    loginBtn.hidden = true;
+    info.hidden = false;
+    const name = state.user.nickname || state.user.email.split('@')[0];
+    $('userAvatar').textContent = name.slice(0, 1).toUpperCase();
+    $('userName').textContent = name;
+    const vip = $('userVip');
+    vip.hidden = !state.premium;
+    if (state.premium && state.subscription) {
+      vip.title = `会员有效期至 ${state.subscription.expires_at.replace('T', ' ').replace('Z', ' UTC')}`;
+    }
+  }
+
+  function openAuth(mode, reason) {
+    setAuthMode(mode || 'login');
+    $('authSub').textContent = reason || '登录后即可下载视频，仅解析与 AI 总结无需登录';
+    showModal('authModal');
+    setTimeout(() => $('authEmail').focus(), 60);
+  }
+
+  function setAuthMode(mode) {
+    state.authMode = mode;
+    document.querySelectorAll('.auth-tab').forEach((tab) => {
+      tab.classList.toggle('is-active', tab.dataset.authTab === mode);
+    });
+    $('nicknameField').hidden = mode !== 'register';
+    $('authSubmit').textContent = mode === 'register' ? '注册并登录' : '登录';
+    $('authTitle').textContent = mode === 'register' ? '注册超级视频' : '登录超级视频';
+    $('authPassword').autocomplete = mode === 'register' ? 'new-password' : 'current-password';
+    $('authError').hidden = true;
+  }
+
+  async function submitAuth(e) {
+    e.preventDefault();
+    const mode = state.authMode;
+    const email = $('authEmail').value.trim();
+    const password = $('authPassword').value;
+    const nickname = $('authNickname').value.trim();
+    const btn = $('authSubmit');
+    const error = $('authError');
+    error.hidden = true;
+    btn.disabled = true;
+    btn.textContent = mode === 'register' ? '注册中…' : '登录中…';
+    try {
+      const body = mode === 'register' ? { email, password, nickname } : { email, password };
+      const data = await api(mode === 'register' ? '/api/auth/register' : '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      applyMe(data);
+      closeModal('authModal');
+      $('authForm').reset();
+      toast(mode === 'register' ? `注册成功，欢迎 ${data.user.nickname}` : `欢迎回来，${data.user.nickname}`);
+      retryPendingDownload();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = mode === 'register' ? '注册并登录' : '登录';
+    }
+  }
+
+  async function doLogout() {
+    try {
+      await api('/api/auth/logout', { method: 'POST' });
+    } catch (_) { /* ignore */ }
+    state.user = null;
+    state.premium = false;
+    state.subscription = null;
+    state.pendingDownload = null;
+    state.jobs = [];
+    state.jobsRaw = '';
+    state.page = 0;
+    renderUser();
+    renderJobs();
+    if (state.meta) renderFormats(state.meta.formats || []);
+    toast('已退出登录');
+  }
+
+  /* ------------------------------------------------------------ 会员支付 */
+  function applyPlan(plan) {
+    const p = plan || state.plan;
+    if (p) {
+      $('planName').textContent = p.label || '月度会员';
+      $('planPrice').textContent = p.price_text || `¥${(p.amount_cents / 100).toFixed(0)}`;
+      $('planUnit').textContent = `/ ${p.days} 天`;
+    }
+    $('mockPayBtn').hidden = !state.mockPay;
+  }
+
+  function openPay(reason) {
+    $('payReason').textContent = reason || '该清晰度需要会员，开通后可下载 720P / 1080P / 4K';
+    $('planStep').hidden = false;
+    $('qrStep').hidden = true;
+    state.payOrder = null;
+    applyPlan();
+    showModal('payModal');
+  }
+
+  async function startPay(provider) {
+    if (!state.user) {
+      openAuth('login', '支付前请先登录账号');
+      return;
+    }
+    try {
+      const data = await api('/api/pay/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
+      state.payOrder = data.order;
+      applyPlan(data.plan);
+      showQr(data.order);
+    } catch (err) {
+      if (err.status === 401) openAuth('login', '支付前请先登录账号');
+      else toast(err.message);
+    }
+  }
+
+  function showQr(order) {
+    const isWechat = order.provider === 'wechat';
+    $('qrTitle').textContent = isWechat ? '微信扫码支付' : '支付宝扫码支付';
+    $('qrSub').textContent = isWechat
+      ? '打开微信「扫一扫」完成支付，支付成功后本页会自动刷新'
+      : '打开支付宝「扫一扫」完成支付，支付成功后本页会自动刷新';
+    $('qrImg').src = `${order.qr_url}?v=${Date.now()}`;
+    $('qrPrice').textContent = `${order.price_text} · ${order.plan_label}`;
+    $('qrStatus').textContent = '等待支付…';
+    $('mockPayBtn').hidden = !order.mock;
+    $('planStep').hidden = true;
+    $('qrStep').hidden = false;
+    startPoll();
+  }
+
+  function startPoll() {
+    stopPoll();
+    const orderId = state.payOrder && state.payOrder.id;
+    if (!orderId) return;
+    state.payTimer = setInterval(async () => {
+      try {
+        const data = await api(`/api/pay/orders/${orderId}`);
+        if (data.order && data.order.status === 'paid') {
+          stopPoll();
+          $('qrStatus').textContent = '支付成功，会员已开通';
+          await afterPaid();
+        }
+      } catch (_) { /* ignore */ }
+    }, 2000);
+  }
+
+  function stopPoll() {
+    if (state.payTimer) {
+      clearInterval(state.payTimer);
+      state.payTimer = 0;
+    }
+  }
+
+  async function afterPaid() {
+    await loadMe();
+    closeModal('payModal');
+    toast('会员已开通，正在继续下载');
+    retryPendingDownload();
+  }
+
+  async function mockPay() {
+    if (!state.payOrder) return;
+    const btn = $('mockPayBtn');
+    btn.disabled = true;
+    try {
+      await api(`/api/pay/mock/${state.payOrder.id}`, { method: 'POST' });
+      stopPoll();
+      $('qrStatus').textContent = '支付成功，会员已开通';
+      await afterPaid();
+    } catch (err) {
+      toast(err.message);
+      btn.disabled = false;
+    }
+  }
+
+  function retryPendingDownload() {
+    if (!state.pendingDownload || !state.meta) return;
+    state.pendingDownload = null;
+    startDownload();
   }
 
   /* ------------------------------------------------------------ 状态检测 */
@@ -140,11 +389,20 @@
     const list = $('formatList');
     list.innerHTML = '';
     formats.forEach((f) => {
-      const btn = el('button', 'fmt' + (f.format === state.format ? ' is-active' : ''));
+      const locked = !state.premium && typeof f.height === 'number' && f.height > 480;
+      const btn = el('button', 'fmt' + (f.format === state.format ? ' is-active' : '') + (locked ? ' is-locked' : ''));
       btn.type = 'button';
       btn.dataset.format = f.format;
       btn.appendChild(el('span', '', f.label));
       btn.appendChild(el('small', '', f.size || f.note || ''));
+      if (locked) {
+        const lock = el('span', 'fmt__lock');
+        lock.title = '会员清晰度，开通后可下载';
+        lock.innerHTML = '<svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true">'
+          + '<rect x="5" y="10" width="14" height="10" rx="2" fill="currentColor"></rect>'
+          + '<path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.4"></path></svg>';
+        btn.appendChild(lock);
+      }
       btn.addEventListener('click', () => {
         state.format = f.format;
         list.querySelectorAll('.fmt').forEach((n) => n.classList.toggle('is-active', n === btn));
@@ -154,11 +412,42 @@
   }
 
   /* ------------------------------------------------------------ 下载 */
-  // 与「最近下载」里的「重新下载」等价：点击即由浏览器下载文件。
-  // 服务端先把 m3u8 合并成 mp4，就绪后浏览器开始保存。
-  function startDownload() {
+  // 点击下载时先过服务端门禁：未登录弹登录窗，超 480P 弹升级窗；
+  // 免费用户的「最高画质」会自动降级到 480P，不弹窗。
+  async function startDownload() {
     if (!state.meta) { toast('先解析一个视频'); return; }
+    const url = state.meta.url;
     const fmt = state.format || 'bv*+ba/b';
+    const statusEl = $('downloadStatus');
+    try {
+      const check = await api('/api/download/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, format: fmt }),
+      });
+      state.pendingDownload = null;
+      if (check.downgraded) toast('免费用户已自动选择 480P，开通会员可下载更高清晰度');
+      triggerBrowserDownload(check.format);
+    } catch (err) {
+      if (err.status === 401 && err.code === 'login_required') {
+        state.pendingDownload = { url, format: fmt };
+        openAuth('login', '下载视频前需要先登录；只解析或看 AI 总结无需登录');
+        return;
+      }
+      if (err.status === 403 && err.code === 'subscription_required') {
+        state.pendingDownload = { url, format: fmt };
+        const detail = (err.payload && err.payload.detail) || {};
+        if (detail.plan) state.plan = detail.plan;
+        if (detail.providers) state.providers = detail.providers;
+        openPay(detail.message || '该清晰度需要会员，开通后可下载 720P / 1080P / 4K');
+        return;
+      }
+      statusEl.textContent = '';
+      toast(err.message);
+    }
+  }
+
+  function triggerBrowserDownload(fmt) {
     const href = `/api/dl?url=${encodeURIComponent(state.meta.url)}&format=${encodeURIComponent(fmt)}`;
     $('downloadStatus').textContent = '正在准备文件…';
     // 在用户点击事件内触发，避免被浏览器的“自动下载”拦截
@@ -405,6 +694,28 @@
 
     $('downloadBtn').addEventListener('click', startDownload);
 
+    // 账号：登录入口 / 退出 / 弹窗开关
+    $('loginBtn').addEventListener('click', () => openAuth('login'));
+    $('logoutBtn').addEventListener('click', doLogout);
+    document.querySelectorAll('.auth-tab').forEach((tab) => {
+      tab.addEventListener('click', () => setAuthMode(tab.dataset.authTab));
+    });
+    $('authForm').addEventListener('submit', submitAuth);
+    document.querySelectorAll('[data-close]').forEach((node) => {
+      node.addEventListener('click', () => closeModal(node.dataset.close));
+    });
+
+    // 支付：选择渠道 → 二维码 → 轮询 / 模拟支付
+    $('payWechat').addEventListener('click', () => startPay('wechat'));
+    $('payAlipay').addEventListener('click', () => startPay('alipay'));
+    $('mockPayBtn').addEventListener('click', mockPay);
+    $('payBack').addEventListener('click', () => {
+      stopPoll();
+      state.payOrder = null;
+      $('qrStep').hidden = true;
+      $('planStep').hidden = false;
+    });
+
     $('summaryBtn').addEventListener('click', () => {
       if (!state.meta) return;
       $('aiPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -435,6 +746,7 @@
     }, 5000);
   }
 
+  loadMe();
   loadModels();
   refreshJobs();
   bind();

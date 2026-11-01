@@ -134,6 +134,54 @@ def _height_of(f: dict) -> int:
     return int(m.group(1)) if m else 0
 
 
+FREE_MAX_HEIGHT = 480
+BEST_FORMAT = 'bv*+ba/b'
+FREE_BEST_FORMAT = 'bv*[height<=480]+ba/b[height<=480]'
+
+
+def _expr_height(fmt: str) -> int | None:
+    """从 format 表达式里取出 height 上限，如 [height<=720]。"""
+    caps = [int(x) for x in re.findall(r'height\s*<=\s*(\d+)', fmt)]
+    if caps:
+        return max(caps)
+    caps = [int(x) for x in re.findall(r'height\s*<\s*(\d+)', fmt)]
+    if caps:
+        return max(caps) - 1
+    return None
+
+
+def format_height(info: dict, fmt: str) -> int:
+    """估算某个 format 的最高清晰度；仅音频返回 0。"""
+    height = _expr_height(fmt)
+    if height:
+        return height
+    if fmt in ('ba', 'ba/b', 'ba*'):
+        return 0
+    if fmt in (BEST_FORMAT, 'bv*+ba', 'bv*', 'b'):
+        heights = [_height_of(f) for f in info.get('formats') or [] if _height_of(f)]
+        return max(heights) if heights else 2160
+    for f in info.get('formats') or []:
+        if f.get('format_id') == fmt:
+            return _height_of(f)
+    return 0
+
+
+def resolve_format(url: str, fmt: str, premium: bool) -> tuple[str, int, bool]:
+    """下载门禁：返回 (实际使用的 format, 该 format 的高度, 是否允许下载)。
+
+    免费用户选「最高画质」时自动降到 480P 不弹窗；明确选更高档位则不允许，
+    由上层返回 403 引导升级。
+    """
+    meta = parse(url)
+    info = meta['raw_info']
+    height = format_height(info, fmt)
+    if premium or height <= FREE_MAX_HEIGHT:
+        return fmt, height, True
+    if fmt in (BEST_FORMAT, 'bv*+ba', 'bv*', 'b'):
+        return FREE_BEST_FORMAT, FREE_MAX_HEIGHT, True
+    return fmt, height, False
+
+
 def _fmt_label(height: int) -> str:
     if height >= 2160:
         return '4K'
@@ -165,7 +213,7 @@ def _format_options(info: dict) -> list[dict]:
             if best_audio is None or (f.get('abr') or 0) > (best_audio.get('abr') or 0):
                 best_audio = f
 
-    options: list[dict] = [{'label': '最高画质', 'format': 'bv*+ba/b', 'note': '自动选择最佳', 'size': None}]
+    options: list[dict] = [{'label': '最高画质', 'format': BEST_FORMAT, 'note': '自动选择最佳', 'size': None, 'height': None}]
     for height in sorted(best_video_by_h, reverse=True):
         f = best_video_by_h[height]
         merged = bool(f.get('acodec') and f.get('acodec') != 'none')
@@ -178,6 +226,7 @@ def _format_options(info: dict) -> list[dict]:
             'format': f['format_id'] if merged and f.get('format_id') else f'bv*[height<={height}]+ba/b[height<={height}]',
             'note': (f.get('format_note') or '').strip() or ('单文件' if merged else ''),
             'size': _size_text(size),
+            'height': height,
         })
     if best_audio:
         options.append({
@@ -185,6 +234,7 @@ def _format_options(info: dict) -> list[dict]:
             'format': 'ba/b',
             'note': best_audio.get('ext') or 'm4a',
             'size': _size_text(best_audio.get('filesize') or best_audio.get('filesize_approx')),
+            'height': 0,
         })
     # 无清晰度信息时，按码率列出前几个可下载单文件兜底
     if len(options) == 1:
@@ -197,9 +247,10 @@ def _format_options(info: dict) -> list[dict]:
                 'format': f['format_id'] if f.get('format_id') else 'b',
                 'note': '单文件',
                 'size': _size_text(f.get('filesize') or f.get('filesize_approx')),
+                'height': _height_of(f),
             })
         if len(options) == 1:
-            options.append({'label': '最佳单文件', 'format': 'b', 'note': '无需合并', 'size': None})
+            options.append({'label': '最佳单文件', 'format': 'b', 'note': '无需合并', 'size': None, 'height': None})
     return options
 
 
@@ -306,9 +357,17 @@ _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='ydl')
 FORMAT_SAFE = re.compile(r'^[0-9a-zA-Z+*._<>=/\[\]():!-]{1,200}$')
 
 
-def jobs() -> list[dict]:
+def jobs(owner_id: int | None = None) -> list[dict]:
+    """只返回指定用户任务（owner_id 为 None 时返回游客任务）。"""
     with _jobs_lock:
-        return [_public(_jobs[jid]) for jid in reversed(_jobs_order)][:20]
+        out: list[dict] = []
+        for jid in reversed(_jobs_order):
+            rec = _jobs.get(jid)
+            if rec and rec.get('owner_id') == owner_id:
+                out.append(_public(rec))
+                if len(out) >= 20:
+                    break
+        return out
 
 
 def job(job_id: str) -> dict | None:
@@ -317,8 +376,15 @@ def job(job_id: str) -> dict | None:
         return _public(data) if data else None
 
 
+def owner_of(job_id: str) -> int | None:
+    with _jobs_lock:
+        rec = _jobs.get(job_id)
+        return rec.get('owner_id') if rec else None
+
+
 def _public(data: dict) -> dict:
-    return {k: v for k, v in data.items() if k != '_ydl'} | {'percent': round(data.get('percent') or 0, 1)}
+    return {k: v for k, v in data.items() if k not in ('_ydl', 'owner_id')} | {
+        'percent': round(data.get('percent') or 0, 1)}
 
 
 def _update(job_id: str, **fields):
@@ -328,7 +394,7 @@ def _update(job_id: str, **fields):
             _jobs[job_id]['updated_at'] = time.time()
 
 
-def start_download(url: str, fmt: str) -> dict:
+def start_download(url: str, fmt: str, owner_id: int | None = None) -> dict:
     if not FORMAT_SAFE.match(fmt):
         raise ValueError('非法的 format 表达式')
     meta = parse(url)
@@ -337,6 +403,7 @@ def start_download(url: str, fmt: str) -> dict:
         'id': job_id,
         'url': url,
         'format': fmt,
+        'owner_id': owner_id,
         'title': meta['title'],
         'thumbnail': meta.get('thumbnail_proxy'),
         'duration_text': meta.get('duration_text') or '',

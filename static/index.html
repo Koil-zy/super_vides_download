@@ -3,7 +3,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>超级视频下载器 · 解析 / 下载 / AI 总结</title>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=20261101">
 <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'&gt;&lt;rect x='2' y='5' width='28' height='22' rx='6' fill='%23FF6699'/&gt;&lt;path d='M15 11l9 5-9 5z' fill='%23fff'/&gt;&lt;/svg&gt;">
 </head>
 <body>
@@ -46,6 +46,13 @@
       <button class="icon-btn" id="refreshJobs" title="刷新下载记录" aria-label="刷新下载记录">
         <svg viewBox="0 0 24 24" width="18" height="18"><path d="M20 11a8 8 0 1 0-2.3 6.3M20 5v6h-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg>
       </button>
+      <button class="user-login" id="loginBtn" type="button">登录 / 注册</button>
+      <div class="user-info" id="userInfo" hidden>
+        <span class="user-avatar" id="userAvatar">U</span>
+        <span class="user-name" id="userName"></span>
+        <span class="user-vip" id="userVip" hidden>会员</span>
+        <button class="user-logout" id="logoutBtn" type="button">退出</button>
+      </div>
     </div>
   </div>
 </header>
@@ -166,6 +173,94 @@
 
 <div class="toast" id="toast" role="status"></div>
 
-<script src="/static/app.js"></script>
+<!-- 登录 / 注册弹窗：仅在下载时触发 -->
+<div class="modal" id="authModal" hidden>
+  <div class="modal__mask" data-close="authModal"></div>
+  <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <button class="modal__close" type="button" data-close="authModal" aria-label="关闭">×</button>
+    <h3 class="modal__title" id="authTitle">登录超级视频</h3>
+    <p class="modal__sub" id="authSub">登录后即可下载视频，仅解析与 AI 总结无需登录</p>
+
+    <div class="auth-tabs" role="tablist">
+      <button class="auth-tab is-active" type="button" data-auth-tab="login">登录</button>
+      <button class="auth-tab" type="button" data-auth-tab="register">注册</button>
+    </div>
+
+    <form class="auth-form" id="authForm" autocomplete="on">
+      <label class="field">
+        <span>邮箱</span>
+        <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="username" required>
+      </label>
+      <label class="field">
+        <span>密码</span>
+        <input id="authPassword" type="password" placeholder="至少 6 位" minlength="6" maxlength="64" autocomplete="current-password" required>
+      </label>
+      <label class="field" id="nicknameField" hidden>
+        <span>昵称（可选）</span>
+        <input id="authNickname" type="text" maxlength="16" placeholder="不填则用邮箱前缀">
+      </label>
+      <p class="form-error" id="authError" hidden></p>
+      <button class="btn btn--pink btn--block" id="authSubmit" type="submit">登录</button>
+    </form>
+  </div>
+</div>
+
+<!-- 会员升级 / 二维码支付弹窗 -->
+<div class="modal" id="payModal" hidden>
+  <div class="modal__mask" data-close="payModal"></div>
+  <div class="modal__dialog modal__dialog--pay" role="dialog" aria-modal="true" aria-labelledby="payTitle">
+    <button class="modal__close" type="button" data-close="payModal" aria-label="关闭">×</button>
+
+    <div id="planStep">
+      <h3 class="modal__title" id="payTitle">升级月度会员</h3>
+      <p class="modal__sub" id="payReason">该清晰度需要会员，开通后可下载 720P / 1080P / 4K</p>
+      <div class="plan">
+        <div class="plan__head">
+          <span class="plan__name" id="planName">月度会员</span>
+          <span class="plan__badge">不限清晰度</span>
+        </div>
+        <div class="plan__price-row">
+          <span class="plan__price" id="planPrice">¥15</span>
+          <span class="plan__unit" id="planUnit">/ 30 天</span>
+        </div>
+        <ul class="plan__list" id="planList">
+          <li>720P / 1080P / 4K 全部解锁</li>
+          <li>支持微信、支付宝扫码支付</li>
+          <li>到期不自动续费</li>
+        </ul>
+      </div>
+      <div class="pay-btns">
+        <button class="pay-btn pay-btn--wechat" type="button" id="payWechat">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M9 3C4.9 3 1.5 5.8 1.5 9.3c0 2 1.1 3.7 2.9 4.9l-.7 2.1 2.5-1.3c.9.3 1.9.4 2.8.4h.4a5.8 5.8 0 0 1-.3-1.9c0-3.4 3.2-6.1 7.2-6.1h.5C16.2 4.7 12.9 3 9 3Z" fill="currentColor"></path>
+            <path d="M22.5 13.5c0-2.7-2.6-4.9-5.9-4.9s-5.9 2.2-5.9 4.9 2.6 4.9 5.9 4.9c.8 0 1.5-.1 2.2-.4l2.1 1.1-.6-1.8c1.4-1 2.2-2.3 2.2-3.8Z" fill="currentColor" opacity=".65"></path>
+          </svg>
+          微信支付
+        </button>
+        <button class="pay-btn pay-btn--alipay" type="button" id="payAlipay">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm7.4 13.5c-1.9-.9-4.6-1.6-6.9-1.2-1.2.2-1.6 1.2-1.1 2 .6.9 1.9 1.4 3.4 1.4 1.9 0 3.6-.8 4.6-2.2Zm1.2-3.9c-.4-1.6-1.9-2.4-3.4-2.4-1 0-1.9.4-2.4 1.1-.4.7-.2 1.5.7 2 1 .5 2.6.8 4.4.7l.7-1.4Zm.3-1.3.8-1.9h-2.4V6.9h3V5.4h-3V3.6h-1.6v7.7H6.8v1.5h2.3v.6c-2.5.9-4.4 2.4-4.5 3.6-.1 1.4 1.9 2 3.6 1.3 1.5-.6 2.8-1.8 3.7-3.3.9 1.2 1.9 1.7 2.9 1.7v-1.5c-.8 0-1.6-.4-2.3-1.2.5-1 .9-1.9 1.1-2.8h1.7Z" fill="currentColor"></path>
+          </svg>
+          支付宝
+        </button>
+      </div>
+      <p class="pay-note">测试环境：下单后可直接点击「模拟支付成功」验证会员流程</p>
+    </div>
+
+    <div id="qrStep" hidden>
+      <h3 class="modal__title" id="qrTitle">微信扫码支付</h3>
+      <p class="modal__sub" id="qrSub">请使用微信扫一扫，支付完成后本页会自动刷新</p>
+      <div class="qr-box">
+        <img id="qrImg" alt="支付二维码">
+      </div>
+      <div class="qr-price" id="qrPrice">¥15 · 月度会员</div>
+      <p class="qr-status" id="qrStatus">等待支付…</p>
+      <button class="btn btn--blue btn--block" id="mockPayBtn" type="button" hidden>模拟支付成功（测试）</button>
+      <button class="link-btn" id="payBack" type="button">重新选择支付方式</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js?v=20261101"></script>
 
 </body></html>
