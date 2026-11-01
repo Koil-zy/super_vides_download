@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>超级视频下载器 · 管理端</title>
+<link rel="stylesheet" href="/static/style.css?v=20261102">
+<link rel="stylesheet" href="/static/manage.css?v=20261102">
+<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'&gt;&lt;rect x='2' y='5' width='28' height='22' rx='6' fill='%2300AEEC'/&gt;&lt;path d='M15 11l9 5-9 5z' fill='%23fff'/&gt;&lt;/svg&gt;">
+</head>
+<body class="manage-body">
+
+<header class="topbar topbar--manage">
+  <div class="topbar__inner">
+    <a class="brand" href="/manage" aria-label="管理端">
+      <span class="brand__tv" aria-hidden="true">
+        <svg viewBox="0 0 40 26" width="40" height="26">
+          <rect x="0" y="3" width="22" height="20" rx="6" fill="#FF6699"></rect>
+          <rect x="18" y="3" width="22" height="20" rx="6" fill="#00AEEC"></rect>
+          <path d="M15 9.5 L21 13 L15 16.5 Z" fill="#fff"></path>
+          <path d="M25 9.5 L29 13 L25 16.5 Z" fill="#fff"></path>
+        </svg>
+      </span>
+      <span class="brand__name">超级视频</span>
+    </a>
+    <span class="manage-badge">管理端</span>
+
+    <div class="topbar__right">
+      <div class="admin-account" id="adminAccount" hidden>
+        <span class="admin-avatar" id="adminAvatar">A</span>
+        <span class="admin-name" id="adminName"></span>
+        <span class="admin-role" id="adminRole"></span>
+        <button class="user-logout" id="adminLogout" type="button">退出</button>
+      </div>
+      <a class="admin-back" href="/">返回用户端</a>
+    </div>
+  </div>
+</header>
+
+<!-- 登录 / 注册 -->
+<main class="manage-auth" id="manageAuth" hidden>
+  <div class="auth-card">
+    <div class="auth-card__head">
+      <h1>管理端登录</h1>
+      <p>商户与超级管理员均可使用手机号登录，注册需短信验证码</p>
+    </div>
+
+    <div class="auth-tabs" role="tablist">
+      <button class="auth-tab is-active" type="button" data-tab="login">登录</button>
+      <button class="auth-tab" type="button" data-tab="register">注册账号</button>
+    </div>
+
+    <form id="authForm" autocomplete="on">
+      <div class="role-pick" id="roleField" hidden>
+        <span class="role-pick__label">账号类型</span>
+        <div class="role-pick__group">
+          <button class="role-opt is-active" type="button" data-role="merchant">商户</button>
+          <button class="role-opt" type="button" data-role="superadmin">超级管理员</button>
+        </div>
+      </div>
+      <label class="field">
+        <span>手机号</span>
+        <input id="authPhone" type="tel" maxlength="11" placeholder="请输入 11 位手机号" autocomplete="username" required>
+      </label>
+      <label class="field">
+        <span>密码</span>
+        <input id="authPassword" type="password" minlength="6" maxlength="64" placeholder="至少 6 位" autocomplete="current-password" required>
+      </label>
+      <label class="field" id="codeField" hidden>
+        <span>短信验证码</span>
+        <div class="code-row">
+          <input id="authCode" type="text" maxlength="6" placeholder="6 位数字验证码" autocomplete="one-time-code">
+          <button class="code-btn" id="sendCodeBtn" type="button">获取验证码</button>
+        </div>
+      </label>
+      <label class="field" id="initCodeField" hidden>
+        <span>管理员初始化口令</span>
+        <input id="authInitCode" type="password" placeholder="由系统管理员提供" autocomplete="off">
+      </label>
+      <label class="field" id="nameField" hidden>
+        <span id="nameLabel">商户名称（可选）</span>
+        <input id="authName" type="text" maxlength="16" placeholder="不填则显示手机号">
+      </label>
+      <p class="code-hint" id="codeHint" hidden></p>
+      <p class="form-error" id="authError" hidden></p>
+      <button class="btn btn--pink btn--block" id="authSubmit" type="submit">登录</button>
+    </form>
+    <p class="auth-card__foot">商户可直接注册；注册超级管理员需填写初始化口令</p>
+  </div>
+</main>
+
+<!-- 管理后台 -->
+<div class="manage-app" id="manageApp" hidden>
+  <aside class="manage-side">
+    <div class="side-account">
+      <span class="side-avatar" id="sideAvatar">A</span>
+      <div class="side-account__info">
+        <strong id="sideName">-</strong>
+        <span id="sideRole">-</span>
+      </div>
+    </div>
+    <div class="side-meta" id="sideMeta">
+      <p>手机号：<span id="sidePhone">-</span></p>
+      <p id="sideInviteRow" hidden>商户邀请码：<code id="sideInviteCode">-</code></p>
+      <p class="side-tip" id="sideInviteTip" hidden>用户注册时填写该邀请码即可归属到本商户</p>
+    </div>
+
+    <nav class="side-nav" id="sideNav">
+      <button class="side-nav__item" type="button" data-view="users">用户管理</button>
+      <button class="side-nav__item" type="button" data-view="blacklist">黑名单</button>
+      <button class="side-nav__item" type="button" data-view="downloads">下载记录</button>
+      <button class="side-nav__item" type="button" data-view="pay">支付配置</button>
+      <button class="side-nav__item" type="button" data-view="myusers">我的用户</button>
+    </nav>
+  </aside>
+
+  <section class="manage-main">
+    <div class="manage-head">
+      <div>
+        <h2 id="viewTitle">用户管理</h2>
+        <p class="manage-sub" id="viewSub">管理系统内的普通用户</p>
+      </div>
+      <div class="manage-tools">
+        <label class="manage-search">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"></circle>
+            <path d="M16.5 16.5 L21 21" stroke="currentColor" stroke-width="2"></path>
+          </svg>
+          <input id="searchInput" type="text" placeholder="按用户账号搜索">
+        </label>
+        <button class="btn btn--ghost btn--sm" id="searchBtn" type="button">搜索</button>
+        <button class="btn btn--blue btn--sm" id="primaryAction" type="button" hidden>新增用户</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="m-table">
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div class="table-empty" id="tableEmpty" hidden>暂无数据</div>
+    </div>
+
+    <div class="m-pager" id="pager" hidden>
+      <button class="pager__btn" id="prevPage" type="button">‹ 上一页</button>
+      <span class="pager__info" id="pageInfo"></span>
+      <button class="pager__btn" id="nextPage" type="button">下一页 ›</button>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<!-- 新增用户 -->
+<div class="modal" id="userModal" hidden>
+  <div class="modal__mask" data-close="userModal"></div>
+  <div class="modal__dialog" role="dialog" aria-modal="true">
+    <button class="modal__close" type="button" data-close="userModal" aria-label="关闭">×</button>
+    <h3 class="modal__title">新增用户</h3>
+    <p class="modal__sub">创建的账号可直接用邮箱 + 密码在用户端登录</p>
+    <form id="userForm">
+      <label class="field">
+        <span>邮箱</span>
+        <input id="userEmail" type="email" placeholder="you@example.com" required>
+      </label>
+      <label class="field">
+        <span>密码</span>
+        <input id="userPassword" type="password" minlength="6" maxlength="64" placeholder="至少 6 位" required>
+      </label>
+      <label class="field">
+        <span>昵称（可选）</span>
+        <input id="userNickname" type="text" maxlength="16" placeholder="不填则用邮箱前缀">
+      </label>
+      <label class="field">
+        <span>归属商户</span>
+        <select id="userMerchant">
+          <option value="">不归属商户</option>
+        </select>
+      </label>
+      <label class="check-field">
+        <input id="userPremium" type="checkbox">
+        <span>创建后直接开通会员（30 天）</span>
+      </label>
+      <p class="form-error" id="userError" hidden></p>
+      <button class="btn btn--pink btn--block" id="userSubmit" type="submit">创建用户</button>
+    </form>
+  </div>
+</div>
+
+<!-- 拉黑确认 -->
+<div class="modal" id="blacklistModal" hidden>
+  <div class="modal__mask" data-close="blacklistModal"></div>
+  <div class="modal__dialog" role="dialog" aria-modal="true">
+    <button class="modal__close" type="button" data-close="blacklistModal" aria-label="关闭">×</button>
+    <h3 class="modal__title">拉黑用户</h3>
+    <p class="modal__sub" id="blacklistSub">该用户将被禁用登录与下载，可在黑名单页恢复</p>
+    <label class="field">
+      <span>拉黑原因（可选）</span>
+      <textarea id="blacklistReason" rows="3" maxlength="200" placeholder="例如：违规批量下载"></textarea>
+    </label>
+    <p class="form-error" id="blacklistError" hidden></p>
+    <button class="btn btn--pink btn--block" id="blacklistSubmit" type="button">确认拉黑</button>
+  </div>
+</div>
+
+<!-- 支付配置 -->
+<div class="modal" id="configModal" hidden>
+  <div class="modal__mask" data-close="configModal"></div>
+  <div class="modal__dialog" role="dialog" aria-modal="true">
+    <button class="modal__close" type="button" data-close="configModal" aria-label="关闭">×</button>
+    <h3 class="modal__title" id="configTitle">新增支付配置</h3>
+    <p class="modal__sub" id="configSub">配置会按版本保存，修改后旧配置自动转为历史记录</p>
+    <form id="configForm">
+      <label class="field">
+        <span>支付渠道</span>
+        <select id="configProvider">
+          <option value="wechat">微信支付</option>
+          <option value="alipay">支付宝</option>
+        </select>
+      </label>
+      <div id="wxFields">
+        <label class="field">
+          <span>AppID</span>
+          <input id="cfgAppId" type="text" placeholder="微信开放平台 AppID" autocomplete="off">
+        </label>
+        <label class="field" id="mchidField">
+          <span>商户号 MchID</span>
+          <input id="cfgMchid" type="text" placeholder="微信支付商户号" autocomplete="off">
+        </label>
+        <label class="field">
+          <span>APIv3 密钥</span>
+          <input id="cfgApiKey" type="password" placeholder="APIv3 Key" autocomplete="new-password">
+        </label>
+      </div>
+      <div id="aliFields" hidden>
+        <label class="field">
+          <span>AppID</span>
+          <input id="cfgAliAppId" type="text" placeholder="支付宝应用 AppID" autocomplete="off">
+        </label>
+        <label class="field">
+          <span>应用私钥</span>
+          <textarea id="cfgPrivateKey" rows="3" placeholder="应用私钥（PEM）" autocomplete="off"></textarea>
+        </label>
+        <label class="field">
+          <span>支付宝公钥</span>
+          <textarea id="cfgPublicKey" rows="3" placeholder="支付宝公钥（PEM）" autocomplete="off"></textarea>
+        </label>
+      </div>
+      <p class="form-error" id="configError" hidden></p>
+      <button class="btn btn--blue btn--block" id="configSubmit" type="submit">保存配置</button>
+    </form>
+  </div>
+</div>
+
+<!-- 通用确认 -->
+<div class="modal" id="confirmModal" hidden>
+  <div class="modal__mask" data-close="confirmModal"></div>
+  <div class="modal__dialog modal__dialog--sm" role="dialog" aria-modal="true">
+    <h3 class="modal__title">确认操作</h3>
+    <p class="modal__sub" id="confirmText">确定要执行该操作吗？</p>
+    <div class="confirm-actions">
+      <button class="btn btn--ghost" id="confirmCancel" type="button">取消</button>
+      <button class="btn btn--pink" id="confirmOk" type="button">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/manage.js?v=20261102"></script>
+</body></html>

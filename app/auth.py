@@ -71,22 +71,38 @@ def _normalize(email: str, password: str, nickname: str | None) -> tuple[str, st
 
 
 def user_payload(row: sqlite3.Row) -> dict:
+    keys = row.keys()
     return {
         'id': row['id'],
         'email': row['email'],
         'nickname': row['nickname'],
         'created_at': row['created_at'],
+        'merchant_id': row['merchant_id'] if 'merchant_id' in keys else None,
     }
 
 
-def register(conn: sqlite3.Connection, email: str, password: str, nickname: str | None) -> dict:
+def _resolve_merchant(conn: sqlite3.Connection, merchant_code: str | None) -> int | None:
+    """普通用户注册时可填商户邀请码，用于归属到对应商户。"""
+    code = (merchant_code or '').strip().upper()
+    if not code:
+        return None
+    row = conn.execute('SELECT id FROM admins WHERE merchant_code = ?', (code,)).fetchone()
+    if not row:
+        raise AuthError('invalid_invite_code', '商户邀请码无效，请与商户确认')
+    return row['id']
+
+
+def register(conn: sqlite3.Connection, email: str, password: str, nickname: str | None,
+             merchant_code: str | None = None) -> dict:
     email, password, nickname = _normalize(email, password, nickname)
     exists = conn.execute('SELECT 1 FROM users WHERE email = ?', (email,)).fetchone()
     if exists:
         raise AuthError('email_exists', '该邮箱已注册，请直接登录')
+    merchant_id = _resolve_merchant(conn, merchant_code)
     cur = conn.execute(
-        'INSERT INTO users (email, password_hash, nickname, created_at) VALUES (?, ?, ?, ?)',
-        (email, hash_password(password), nickname, now_iso()),
+        'INSERT INTO users (email, password_hash, nickname, created_at, merchant_id) '
+        'VALUES (?, ?, ?, ?, ?)',
+        (email, hash_password(password), nickname, now_iso(), merchant_id),
     )
     row = conn.execute('SELECT * FROM users WHERE id = ?', (cur.lastrowid,)).fetchone()
     return user_payload(row)
@@ -97,6 +113,8 @@ def login(conn: sqlite3.Connection, email: str, password: str) -> dict:
     row = conn.execute('SELECT * FROM users WHERE email = ?', (email,)).fetchone()
     if not row or not verify_password(password or '', row['password_hash']):
         raise AuthError('invalid_credentials', '邮箱或密码不正确', 401)
+    if row['blacklisted_at']:
+        raise AuthError('account_blacklisted', '账号已被禁用，请联系管理员', 403)
     return user_payload(row)
 
 
@@ -129,6 +147,10 @@ def current_user(request: Request) -> dict | None:
             return None
         if row['session_expires'] <= now_iso():
             conn.execute('DELETE FROM sessions WHERE token = ?', (token,))
+            return None
+        if row['blacklisted_at']:
+            # 被管理端拉黑后立即失效，已登录会话一并清理
+            conn.execute('DELETE FROM sessions WHERE user_id = ?', (row['id'],))
             return None
         return user_payload(row)
 

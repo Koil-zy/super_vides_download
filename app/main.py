@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from . import ai, auth, engine, pay
+from . import admin, admin_api, ai, auth, engine, pay
 from .db import get_db, init_db
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,6 +23,9 @@ STATIC_DIR = ROOT / 'static'
 
 app = FastAPI(title='超级视频下载器', version='1.0.0')
 init_db()
+with get_db() as _conn:
+    admin.ensure_super_admin(_conn)
+app.include_router(admin_api.router)
 
 SSE_HEADERS = {
     'Cache-Control': 'no-cache',
@@ -72,6 +75,16 @@ def clean_url(raw: str) -> str:
 
 def public_meta(meta: dict) -> dict:
     return {k: v for k, v in meta.items() if k != 'raw_info'}
+
+
+def _record_download(user_id: int, job_id: str, url: str, fmt: str, height: int) -> None:
+    """写入管理端可见的下载记录；失败不影响下载流程。"""
+    try:
+        meta = engine.parse(url)
+        admin_api.record_download(user_id, job_id, meta.get('title') or '',
+                                  meta.get('platform') or '', fmt, height, url)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def require_login(request: Request) -> dict:
@@ -124,6 +137,7 @@ class RegisterIn(BaseModel):
     email: str
     password: str
     nickname: str | None = None
+    merchant_code: str | None = None
 
 
 class LoginIn(BaseModel):
@@ -168,7 +182,7 @@ async def parse(body: ParseIn):
 async def auth_register(body: RegisterIn):
     try:
         with get_db() as conn:
-            user = auth.register(conn, body.email, body.password, body.nickname)
+            user = auth.register(conn, body.email, body.password, body.nickname, body.merchant_code)
             token, _ = auth.create_session(conn, user['id'])
             sub = pay.subscription_info(conn, user['id'])
     except auth.AuthError as exc:
@@ -312,6 +326,7 @@ async def download(body: DownloadIn, request: Request):
         job = await run_in_threadpool(engine.start_download, url, effective, user['id'])
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f'创建任务失败：{clean_error(exc)}') from exc
+    await run_in_threadpool(_record_download, user['id'], job['id'], url, effective, height)
     return {**job, 'format': effective, 'height': height, 'downgraded': downgraded}
 
 
@@ -348,6 +363,7 @@ async def direct_download(request: Request, url: str, format: str = engine.BEST_
         job = await run_in_threadpool(engine.start_download, url, effective, user['id'])
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f'创建任务失败：{clean_error(exc)}') from exc
+    await run_in_threadpool(_record_download, user['id'], job['id'], url, effective, _height)
 
     for _ in range(7200):  # 最长等待约 1 小时
         rec = engine.job(job['id'])
@@ -462,6 +478,12 @@ async def image_proxy(url: str):
 @app.get('/')
 async def index():
     return FileResponse(STATIC_DIR / 'index.html')
+
+
+@app.get('/manage')
+async def manage():
+    """管理端入口：与用户端分离的独立页面。"""
+    return FileResponse(STATIC_DIR / 'manage.html')
 
 
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')

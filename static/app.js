@@ -19,6 +19,8 @@
     pendingDownload: null,
     payOrder: null,
     payTimer: 0,
+    // 商户邀请码：通过 /?m=CODE 进入时自动带入注册表单
+    inviteCode: (new URLSearchParams(location.search).get('m') || '').trim().toUpperCase(),
   };
 
   const PAGE_SIZE = 12;
@@ -145,6 +147,10 @@
       tab.classList.toggle('is-active', tab.dataset.authTab === mode);
     });
     $('nicknameField').hidden = mode !== 'register';
+    $('inviteField').hidden = mode !== 'register';
+    if (mode === 'register' && !$('authInvite').value) {
+      $('authInvite').value = state.inviteCode;
+    }
     $('authSubmit').textContent = mode === 'register' ? '注册并登录' : '登录';
     $('authTitle').textContent = mode === 'register' ? '注册超级视频' : '登录超级视频';
     $('authPassword').autocomplete = mode === 'register' ? 'new-password' : 'current-password';
@@ -163,7 +169,9 @@
     btn.disabled = true;
     btn.textContent = mode === 'register' ? '注册中…' : '登录中…';
     try {
-      const body = mode === 'register' ? { email, password, nickname } : { email, password };
+      const body = mode === 'register'
+        ? { email, password, nickname, merchant_code: $('authInvite').value.trim() }
+        : { email, password };
       const data = await api(mode === 'register' ? '/api/auth/register' : '/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

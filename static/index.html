@@ -199,6 +199,10 @@
         <span>昵称（可选）</span>
         <input id="authNickname" type="text" maxlength="16" placeholder="不填则用邮箱前缀">
       </label>
+      <label class="field" id="inviteField" hidden>
+        <span>商户邀请码（可选）</span>
+        <input id="authInvite" type="text" maxlength="6" placeholder="由商户提供，不填也可注册">
+      </label>
       <p class="form-error" id="authError" hidden></p>
       <button class="btn btn--pink btn--block" id="authSubmit" type="submit">登录</button>
     </form>
@@ -261,6 +265,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=20261101"></script>
+<script src="/static/app.js?v=20261102"></script>
 
 </body></html>
